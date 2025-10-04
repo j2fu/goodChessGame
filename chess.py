@@ -1,9 +1,7 @@
 # Importing Modules
-# Importing Modules
-import pygame  # Make sure pygame is installed: pip install pygame
-import requests  # Make sure requests is installed: pip install requests
+import pygame  # pip install pygame
+import requests  # pip install requests
 import random
-
 from io import BytesIO
 
 # Initialising pygame module
@@ -17,11 +15,17 @@ screen = pygame.display.set_mode([WIDTH, HEIGHT])
 pygame.display.set_caption('Chess Game')
 
 font = pygame.font.Font('freesansbold.ttf', 20)
-medium_font = pygame.font.Font('freesansbold.ttf', 40)
+medium_font = pygame.font.Font('freesansbold.ttf', 30)
 big_font = pygame.font.Font('freesansbold.ttf', 50)
 
 timer = pygame.time.Clock()
 fps = 60
+
+# variables for block placement
+block_action_pending = False
+selecting_block = False
+block_actor = None
+block_selection_popup = False  # NEW: popup state
 
 # game variables and images
 white_pieces = ['rook', 'knight', 'bishop', 'king', 'queen', 'bishop', 'knight', 'rook',
@@ -36,7 +40,6 @@ black_locations = [(0, 7), (1, 7), (2, 7), (3, 7), (4, 7), (5, 7), (6, 7), (7, 7
 captured_pieces_white = []
 captured_pieces_black = []
 
-# 0 - whites turn no selection: 1-whites turn piece selected: 2- black turn no selection, 3 - black turn piece selected
 turn_step = 0
 selection = 100
 valid_moves = []
@@ -55,7 +58,7 @@ image_urls = ['https://media.geeksforgeeks.org/wp-content/uploads/20240302025946
               'https://media.geeksforgeeks.org/wp-content/uploads/20240302025325/white_knight.png',
               'https://media.geeksforgeeks.org/wp-content/uploads/20240302025953/white_pawn.png']
 
-# load in game piece images (queen, king, rook, bishop, knight, pawn) x 2
+# load in game piece images
 def load_image_from_url(url, size, small_size):
     response = requests.get(url)
     image = pygame.image.load(BytesIO(response.content))
@@ -79,7 +82,6 @@ white_bishop, white_bishop_small = load_image_from_url(image_urls[9], (80, 80), 
 white_knight, white_knight_small = load_image_from_url(image_urls[10], (80, 80), (45, 45))
 white_pawn, white_pawn_small   = load_image_from_url(image_urls[11], (65, 65), (45, 45))
 
-
 white_images = [white_pawn, white_queen, white_king,
                 white_knight, white_rook, white_bishop]
 small_white_images = [white_pawn_small, white_queen_small, white_king_small, white_knight_small,
@@ -92,91 +94,81 @@ small_black_images = [black_pawn_small, black_queen_small, black_king_small,
 
 piece_list = ['pawn', 'queen', 'king', 'knight', 'rook', 'bishop']
 
-#add global varaiables for blocks
 blocks = set()
 
-
-# check variables/ flashing counter
 counter = 0
 winner = ''
 game_over = False
 
-# Function to generate blocks on the board
+# -------- BLOCK FUNCTIONS --------
 def generate_blocks(num_blocks=2):
     new_blocks = set()
-    while len(new_blocks)//2 < num_blocks:  # count pairs once
+    while len(new_blocks)//2 < num_blocks:
         x = random.randint(0, 7)
         y = random.randint(0, 7)
-
-        # Skip if occupied
         if (x,y) in white_locations or (x,y) in black_locations:
             continue
-
-        # Pick a random direction
         directions = [(0,1),(0,-1),(1,0),(-1,0)]
         dx, dy = random.choice(directions)
         nx, ny = x+dx, y+dy
-
-        # Neighbor must be inside board and empty
         if 0 <= nx <= 7 and 0 <= ny <= 7:
             if (nx,ny) not in white_locations and (nx,ny) not in black_locations:
-                # Add block in both directions
                 new_blocks.add(((x,y),(nx,ny)))
                 new_blocks.add(((nx,ny),(x,y)))
     return new_blocks
 
-#function to draw blocks on board
 def draw_blocks():
+    seen = set()
     for (a,b) in blocks:
-        x1, y1 = a
-        x2, y2 = b
+        key = tuple(sorted([a,b]))
+        if key in seen: continue
+        seen.add(key)
+        x1,y1=a; x2,y2=b
+        if x1==x2:
+            y_line=max(y1,y2)*100
+            pygame.draw.line(screen,"red",(x1*100,y_line),(x1*100+100,y_line),6)
+        elif y1==y2:
+            x_line=max(x1,x2)*100
+            pygame.draw.line(screen,"red",(x_line,y1*100),(x_line,y1*100+100),6)
 
-        # horizontal wall
-        if x1 == x2:
-            if y1 < y2:  # block is bottom of (x1,y1)
-                pygame.draw.line(screen, "red",
-                                 (x1*100, y2*100),
-                                 (x1*100+100, y2*100), 6)
-            else:        # block is top of (x1,y1)
-                pygame.draw.line(screen, "red",
-                                 (x1*100, y1*100),
-                                 (x1*100+100, y1*100), 6)
+# Popup overlay for block choice
+def draw_block_popup():
+    pygame.draw.rect(screen, "black", [150, 150, 700, 500])
+    pygame.draw.rect(screen, "gold", [150, 150, 700, 500], 4)
+    screen.blit(big_font.render("Captured a piece!", True, "white"), (200, 170))
+    screen.blit(medium_font.render("Remove a block? (Press # or N to skip)", True, "white"), (200, 220))
+    seen = set()
+    idx = 1
+    for (a, b) in blocks:
+        key = tuple(sorted([a, b]))
+        if key in seen: continue
+        seen.add(key)
+        text = f"{idx}. {a} - {b}"
+        screen.blit(font.render(text, True, "white"), (200, 260 + idx*30))
+        idx += 1
 
-        # vertical wall
-        if y1 == y2:
-            if x1 < x2:  # block is right of (x1,y1)
-                pygame.draw.line(screen, "red",
-                                 (x2*100, y1*100),
-                                 (x2*100, y1*100+100), 6)
-            else:        # block is left of (x1,y1)
-                pygame.draw.line(screen, "red",
-                                 (x1*100, y1*100),
-                                 (x1*100, y1*100+100), 6)
-
-
-# draw main game board
+# -------- DRAW BOARD --------
 def draw_board():
     for i in range(32):
         column = i % 4
         row = i // 4
         if row % 2 == 0:
-            pygame.draw.rect(screen, 'light gray', [
-                             600 - (column * 200), row * 100, 100, 100])
+            pygame.draw.rect(screen, 'light gray', [600 - (column * 200), row * 100, 100, 100])
         else:
-            pygame.draw.rect(screen, 'light gray', [
-                             700 - (column * 200), row * 100, 100, 100])
+            pygame.draw.rect(screen, 'light gray', [700 - (column * 200), row * 100, 100, 100])
         pygame.draw.rect(screen, 'gray', [0, 800, WIDTH, 100])
         pygame.draw.rect(screen, 'gold', [0, 800, WIDTH, 100], 5)
         pygame.draw.rect(screen, 'gold', [800, 0, 200, HEIGHT], 5)
         status_text = ['White: Select a Piece to Move!', 'White: Select a Destination!',
                        'Black: Select a Piece to Move!', 'Black: Select a Destination!']
-        screen.blit(big_font.render(
-            status_text[turn_step], True, 'black'), (20, 820))
+        screen.blit(big_font.render(status_text[turn_step], True, 'black'), (20, 820))
         for i in range(9):
             pygame.draw.line(screen, 'black', (0, 100 * i), (800, 100 * i), 2)
             pygame.draw.line(screen, 'black', (100 * i, 0), (100 * i, 800), 2)
         screen.blit(medium_font.render('FORFEIT', True, 'black'), (810, 830))
 
+    if block_selection_popup:
+        draw_block_popup()
 
 # draw pieces onto board
 def draw_pieces():
@@ -481,6 +473,8 @@ def draw_game_over():
         f'{winner} won the game!', True, 'white'), (210, 210))
     screen.blit(font.render(f'Press ENTER to Restart!',
                             True, 'white'), (210, 240))
+    
+
 
 
 # main game loop
@@ -491,10 +485,43 @@ blocks = generate_blocks(3)
 run = True
 while run:
     timer.tick(fps)
-    if counter < 30:
-        counter += 1
-    else:
-        counter = 0
+    counter = (counter + 1) % 30
+
+    # --- If popup is active, freeze board and only show popup ---
+    if block_selection_popup:
+        screen.fill('dark gray')
+        draw_board()
+        draw_blocks()
+        draw_pieces()
+        draw_captured()
+        draw_check()
+        draw_block_popup()
+        pygame.display.flip()
+
+        # Only handle popup keys / quit
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                run = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_n:
+                    block_selection_popup = False
+                elif pygame.K_1 <= event.key <= pygame.K_9:
+                    choice = event.key - pygame.K_0
+                    # build list of unique blocks
+                    seen = []
+                    for (a, b) in blocks:
+                        key = tuple(sorted([a, b]))
+                        if key not in seen:
+                            seen.append(key)
+                    if 1 <= choice <= len(seen):
+                        (a, b) = seen[choice-1]
+                        blocks.discard((a, b))
+                        blocks.discard((b, a))
+                        blocks.update(generate_blocks(1))
+                    block_selection_popup = False
+        continue  # skip normal gameplay loop until popup closes
+
+    # --- Normal gameplay rendering ---
     screen.fill('dark gray')
     draw_board()
     draw_blocks()
@@ -505,14 +532,16 @@ while run:
         valid_moves = check_valid_moves()
         draw_valid(valid_moves)
 
-    # event handling
+    # --- Normal event handling ---
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             run = False
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and not game_over:
             x_coord = event.pos[0] // 100
             y_coord = event.pos[1] // 100
             click_coords = (x_coord, y_coord)
+
             if turn_step <= 1:
                 if click_coords == (8, 8) or click_coords == (9, 8):
                     winner = 'black'
@@ -529,13 +558,15 @@ while run:
                             winner = 'white'
                         black_pieces.pop(black_piece)
                         black_locations.pop(black_piece)
-                    black_options = check_options(
-                        black_pieces, black_locations, 'black')
-                    white_options = check_options(
-                        white_pieces, white_locations, 'white')
+                        # Trigger block popup after capture
+                        block_selection_popup = True
+
+                    black_options = check_options(black_pieces, black_locations, 'black')
+                    white_options = check_options(white_pieces, white_locations, 'white')
                     turn_step = 2
                     selection = 100
                     valid_moves = []
+
             if turn_step > 1:
                 if click_coords == (8, 8) or click_coords == (9, 8):
                     winner = 'white'
@@ -552,10 +583,11 @@ while run:
                             winner = 'black'
                         white_pieces.pop(white_piece)
                         white_locations.pop(white_piece)
-                    black_options = check_options(
-                        black_pieces, black_locations, 'black')
-                    white_options = check_options(
-                        white_pieces, white_locations, 'white')
+                        # Trigger block popup after capture
+                        block_selection_popup = True
+
+                    black_options = check_options(black_pieces, black_locations, 'black')
+                    white_options = check_options(white_pieces, white_locations, 'white')
                     turn_step = 0
                     selection = 100
                     valid_moves = []
@@ -577,15 +609,14 @@ while run:
                 turn_step = 0
                 selection = 100
                 valid_moves = []
-                black_options = check_options(
-                    black_pieces, black_locations, 'black')
-                white_options = check_options(
-                    white_pieces, white_locations, 'white')
+                black_options = check_options(black_pieces, black_locations, 'black')
+                white_options = check_options(white_pieces, white_locations, 'white')
 
     if winner != '':
         game_over = True
         draw_game_over()
 
     pygame.display.flip()
+
 
 pygame.quit()
